@@ -35,6 +35,7 @@ module.exports = (robot) ->
     robot.brain.setAutoSave false
 
     cache = {}
+    ucache = {}
 
     ## restore data from mongodb
     db.createCollection 'brain', (err, collection) ->
@@ -45,8 +46,16 @@ module.exports = (robot) ->
           _private[doc.key] = doc.value
         cache = deepClone _private
         robot.brain.mergeData {_private: _private}
-        robot.brain.resetSaveInterval 10
-        robot.brain.setAutoSave true
+    db.createCollection 'users', (err, collection) ->
+      collection.find({type: 'users'}).toArray (err, docs) ->
+        return robot.logger.error err if err
+        users = {}
+        for doc in docs
+          users[doc.key] = doc.value
+        ucache = deepClone users
+        robot.brain.mergeData {users: users}
+    robot.brain.resetSaveInterval 10
+    robot.brain.setAutoSave true
 
     ## save data into mongodb
     robot.brain.on 'save', (data) ->
@@ -58,6 +67,24 @@ module.exports = (robot) ->
             cache[k] = deepClone v
             collection.update
               type: '_private'
+              key:  k
+            ,
+              $set:
+                value: v
+            ,
+              upsert: true
+            , (err, res) ->
+              robot.logger.error err if err
+            return
+
+      db.collection 'users', (err, collection) ->
+        for k,v of data.users
+          do (k,v) ->
+            return if _.isEqual ucache[k], v  # skip not modified key
+            robot.logger.debug "save \"#{k}\" into mongodb-brain"
+            ucache[k] = deepClone v
+            collection.update
+              type: 'users'
               key:  k
             ,
               $set:
